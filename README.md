@@ -1,7 +1,7 @@
 # Contra City SDK Dumper
 
 Standalone Windows offset and metadata dumper for the Contra City Unity client,
-builds **1.0.187 - 1.0.192**. It attaches to a running `ContraCity.exe`, locates
+builds **1.0.187 - 1.0.193**. It attaches to a running `ContraCity.exe`, locates
 the Mono runtime image and the managed assemblies mapped by the game, parses the
 CLR metadata, and writes a C++ SDK header plus a hierarchical JSON database.
 
@@ -44,7 +44,7 @@ CMake.
 - CMake 3.20 or newer.
 - Administrator privileges when the game runs elevated or is protected by the
   system. `OpenProcess` returns `ACCESS_DENIED` otherwise.
-- A Contra City client that ships Mono. Builds 1.0.187-1.0.192 use Unity 5.6
+- A Contra City client that ships Mono. Builds 1.0.187-1.0.193 use Unity 5.6
   with `ContraCity_Data\Mono\mono.dll` and `Assembly-CSharp.dll`.
 
 The game itself is 32-bit. An x64 dumper can read a 32-bit process, so either
@@ -162,12 +162,10 @@ output/
 namespace ContraCity::SDK {
 
 inline constexpr std::uint32_t kPointerSize = 4u;
-inline constexpr char kBuildVersion[] = "1.0.192";
+inline constexpr char kBuildVersion[] = "1.0.193";
 
 namespace Modules {
-inline constexpr std::uintptr_t ContraCity = 0x000D0000ull;
-inline constexpr std::uintptr_t mono = 0x10000000ull;
-inline constexpr std::uintptr_t Assembly_CSharp = 0x11D07020ull;
+inline constexpr std::uintptr_t Assembly_CSharp = 0x00400000ull;  // preferred base
 }
 
 namespace Classes {
@@ -179,8 +177,8 @@ struct PlayerManager {
     static constexpr std::uint32_t kOffset_Players = 0x88u;      // Dictionary<Int32, CombatPlayer>
     static constexpr std::uint32_t kOffset_LocalPlayer = 0x8Cu;  // CombatPlayer
 
-    static constexpr std::uint32_t kRva_InitEnvironment = 0x129AC7u;
-    static constexpr std::uintptr_t kAddr_InitEnvironment = 0x11E2ECE7ull;
+    static constexpr std::uint32_t kRva_InitEnvironment = 0x129B5Bu;
+    // Live mode additionally emits kAddr_InitEnvironment.
 };
 
 }
@@ -198,10 +196,10 @@ the class vtable data block.
 {
   "schema": "contracity-sdk/1",
   "target": {
-    "process": "ContraCity.exe",
-    "pid": 12345,
-    "build": "1.0.192",
-    "mode": "live",
+    "process": "offline",
+    "pid": 0,
+    "build": "1.0.193",
+    "mode": "offline",
     "pointerSize": 4
   },
   "runtime": {
@@ -213,12 +211,13 @@ the class vtable data block.
       "name": "Assembly-CSharp.dll",
       "kind": "managed",
       "runtime": "mono",
-      "base": "0x11D07020",
-      "size": 5005312,
+      "base": "0x400000",
+      "baseKind": "preferred",
+      "size": 5038080,
       "layout": "file",
       "assembly": "Assembly-CSharp",
       "assemblyVersion": "1.0.0.0",
-      "classCount": 1249,
+      "classCount": 1261,
       "classes": [
         {
           "name": "PlayerManager",
@@ -240,11 +239,9 @@ the class vtable data block.
             {
               "name": "InitEnvironment",
               "signature": "System.Void InitEnvironment()",
-              "rva": 1219271,
-              "rvaHex": "0x129AC7",
-              "rvaPath": "Assembly-CSharp.dll+0x129AC7",
-              "address": "0x11E2ECE7",
-              "addressKind": "file"
+              "rva": 1219419,
+              "rvaHex": "0x129B5B",
+              "rvaPath": "Assembly-CSharp.dll+0x129B5B"
             }
           ]
         }
@@ -268,18 +265,19 @@ the class vtable data block.
     }
   ],
   "stats": {
-    "modules": 113,
-    "classes": 1506,
-    "fields": 20249,
-    "methods": 18651,
-    "strings": 12002
+    "modules": 32,
+    "classes": 1575,
+    "fields": 20993,
+    "methods": 19336,
+    "strings": 12587
   }
 }
 ```
 
-`ContraCity_SDK.hpp` and `ContraCity_SDK.json` in `output/` are a full snapshot
-from a real 1.0.192 session: 1506 classes, 20,249 fields, 18,651 methods, and
-12,002 string literals. See `output/README.md`.
+`ContraCity_SDK.hpp` and `ContraCity_SDK.json` in `output/` are a full offline
+1.0.193 snapshot: 1575 classes, 20,993 fields, 19,336 methods, and 12,587 string
+literals. Module bases are preferred bases and runtime addresses are omitted;
+run the dumper against a logged-in client to add them. See `output/README.md`.
 
 ## How offsets are derived
 
@@ -308,7 +306,7 @@ process memory:
    against the `#US` heap, and record the usage path.
 
 The layout implementation was checked against runtime
-`mono_field_get_offset` values on 1.0.192. Key examples:
+`mono_field_get_offset` values on 1.0.193. Key examples:
 
 | Class | Field | Offset |
 |---|---|---:|
@@ -346,7 +344,7 @@ dumper deliberately stays read-only.
 
 ## Mono and IL2CPP
 
-Contra City 1.0.187-1.0.192 is Mono. The tool resolves `GameAssembly.dll` and
+Contra City 1.0.187-1.0.193 is Mono. The tool resolves `GameAssembly.dll` and
 `UnityPlayer.dll` when present, and for `GameAssembly.dll` it reads the export
 table and records `il2cpp_*` exports. Full IL2CPP metadata parsing is not
 implemented, because these builds do not ship the corresponding
