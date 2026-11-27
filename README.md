@@ -14,13 +14,9 @@ Related research repository:
 
 ## Downloads
 
-Pre-compiled Windows x64 builds are attached to the
-[Releases](https://github.com/vmprotector/contra-city-dumper/releases) page.
-Download the latest `ContraCityDumper-windows-x64-v*.zip`, extract it, and run
-`ContraCityDumper.exe` from an elevated terminal.
-
-Tagged builds are produced by the GitHub Actions workflow in
-`.github/workflows/build.yml`.
+To use the offsets, simply grab the `ContraCity_SDK.hpp` or `ContraCity_SDK.json`
+from the `output/` directory. You can also compile the dumper yourself using
+CMake.
 
 ## What it extracts
 
