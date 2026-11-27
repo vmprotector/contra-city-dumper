@@ -12,6 +12,16 @@ images.
 Related research repository:
 [vmprotector/contra-city-decompiled](https://github.com/vmprotector/contra-city-decompiled)
 
+## Downloads
+
+Pre-compiled Windows x64 builds are attached to the
+[Releases](https://github.com/vmprotector/contra-city-dumper/releases) page.
+Download the latest `ContraCityDumper-windows-x64-v*.zip`, extract it, and run
+`ContraCityDumper.exe` from an elevated terminal.
+
+Tagged builds are produced by the GitHub Actions workflow in
+`.github/workflows/build.yml`.
+
 ## What it extracts
 
 - Native module bases: `ContraCity.exe`, `GameAssembly.dll` (when present),
