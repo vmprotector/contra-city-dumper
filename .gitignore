@@ -1,0 +1,26 @@
+# Build trees
+build/
+build32/
+build-*/
+out/
+.vs/
+.vscode/
+*.user
+*.suo
+*.VC.db
+*.VC.opendb
+
+# Compiler output
+*.obj
+*.ilk
+*.pdb
+*.idb
+*.exp
+*.lib
+*.exe
+*.dll
+*.log
+
+# Generated diagnostics
+*.tmp
+*.bak

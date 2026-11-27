@@ -1,0 +1,247 @@
+#include "contra/json.hpp"
+
+#include <algorithm>
+#include <fstream>
+#include <unordered_map>
+#include <unordered_set>
+
+namespace contra::emit {
+
+namespace {
+
+std::string cppString(std::string_view value) {
+    std::string result;
+    result.reserve(value.size() + 8);
+    for (char c : sanitizeUtf8(value)) {
+        switch (c) {
+            case '\\': result += "\\\\"; break;
+            case '"': result += "\\\""; break;
+            case '\n': result += "\\n"; break;
+            case '\r': result += "\\r"; break;
+            case '\t': result += "\\t"; break;
+            default: result.push_back(c); break;
+        }
+    }
+    return result;
+}
+
+std::string cleanComment(std::string_view value) {
+    std::string result = sanitizeUtf8(value);
+    std::string out;
+    out.reserve(result.size());
+    for (std::size_t i = 0; i < result.size(); ++i) {
+        if (result[i] == '\r' || result[i] == '\n') {
+            out.push_back(' ');
+        } else if (result[i] == '*' && i + 1 < result.size() && result[i + 1] == '/') {
+            out += "* /";
+            ++i;
+        } else {
+            out.push_back(result[i]);
+        }
+    }
+    return out;
+}
+
+std::string classStructName(const model::ClassInfo& klass,
+                            std::unordered_set<std::string>& used) {
+    // <Module> exists in every assembly and several obfuscated assemblies reuse
+    // short type names with the same metadata token. Keep appending a numeric
+    // suffix until the identifier is unique across the flat Classes namespace.
+    const std::string base = model::sanitizeIdentifier(
+        klass.fullName, "Class_" + toHex(klass.token & 0x00FFFFFF, 1));
+    std::string name = base;
+    int suffix = 2;
+    while (used.count(name) != 0) {
+        name = base + "_" + std::to_string(suffix++);
+    }
+    used.insert(name);
+    return name;
+}
+
+std::string uniqueMemberName(const std::string& base, std::unordered_set<std::string>& used) {
+    std::string name = base;
+    int suffix = 2;
+    while (used.count(name) != 0) {
+        name = base + "_" + std::to_string(suffix++);
+    }
+    used.insert(name);
+    return name;
+}
+
+void writeFieldConstants(std::ofstream& out, const model::ClassInfo& klass) {
+    std::unordered_set<std::string> used;
+    int index = 0;
+    for (const auto& field : klass.fields) {
+        const std::string base = model::sanitizeIdentifier(
+            field.name, "field_" + std::to_string(index));
+        const std::string member = uniqueMemberName(base, used);
+        ++index;
+
+        if (field.isStatic) {
+            if (field.staticOffset >= 0) {
+                out << "    static constexpr std::uint32_t kStaticOffset_" << member
+                    << " = " << toHex(static_cast<std::uint64_t>(field.staticOffset), 1)
+                    << "u;  // " << cleanComment(field.typeName) << "\n";
+            }
+            continue;
+        }
+
+        if (field.offset >= 0) {
+            out << "    static constexpr std::uint32_t kOffset_" << member << " = "
+                << toHex(static_cast<std::uint64_t>(field.offset), 1)
+                << "u;  // " << cleanComment(field.typeName);
+            if (field.isLiteral && !field.constant.empty()) {
+                out << " = " << cleanComment(field.constant);
+            }
+            out << "\n";
+        }
+    }
+}
+
+void writeMethods(std::ofstream& out, const model::ClassInfo& klass) {
+    std::unordered_set<std::string> used;
+    for (const auto& method : klass.methods) {
+        if (method.rva == 0) {
+            continue;
+        }
+        const std::string base =
+            model::sanitizeIdentifier(method.name, "method_" + toHex(method.token & 0xFFFFFF, 1));
+        const std::string member = uniqueMemberName(base, used);
+
+        out << "    static constexpr std::uint32_t kRva_" << member << " = "
+            << toHex(method.rva, 1) << "u;  // " << cleanComment(method.signature) << "\n";
+        if (method.address != 0) {
+            out << "    static constexpr std::uintptr_t kAddr_" << member << " = "
+                << toHex(static_cast<std::uint64_t>(method.address), 1) << "ull;\n";
+        }
+    }
+}
+
+}  // namespace
+
+void writeHpp(const model::SdkModel& model, const std::filesystem::path& path) {
+    std::ofstream out(path, std::ios::binary);
+    if (!out) {
+        throw AppError("cannot open HPP output: " + path.string(), 5);
+    }
+
+    std::vector<const model::ClassInfo*> classes;
+    for (const auto& klass : model.classes) {
+        if (klass.emit) {
+            classes.push_back(&klass);
+        }
+    }
+    std::sort(classes.begin(), classes.end(), [](const auto* a, const auto* b) {
+        if (a->assembly != b->assembly) {
+            return a->assembly < b->assembly;
+        }
+        return a->fullName < b->fullName;
+    });
+
+    out << "// ContraCity SDK offsets\n";
+    out << "// Generated by ContraCityDumper " << model.toolVersion << " at "
+        << model.generatedAt << "\n";
+    out << "// Target: " << model.processName << " pid=" << model.pid
+        << " build=" << (model.buildVersion.empty() ? "unknown" : model.buildVersion)
+        << " mode=" << model.mode << "\n";
+    out << "// Runtime: " << model.runtimeKind << " " << model.runtimeVersion
+        << ", pointer size " << model.pointerSize << " bytes\n";
+    out << "// This is a process snapshot. Re-run the dumper after a game update.\n";
+    out << "\n";
+    out << "#pragma once\n";
+    out << "\n";
+    out << "#include <cstddef>\n";
+    out << "#include <cstdint>\n";
+    out << "\n";
+    out << "namespace ContraCity::SDK {\n";
+    out << "\n";
+
+    out << "inline constexpr std::uint32_t kPointerSize = " << model.pointerSize << "u;\n";
+    out << "inline constexpr char kBuildVersion[] = \""
+        << cppString(model.buildVersion.empty() ? "unknown" : model.buildVersion)
+        << "\";\n";
+    out << "inline constexpr char kGeneratedAt[] = \"" << cppString(model.generatedAt)
+        << "\";\n";
+    out << "inline constexpr char kTargetProcess[] = \"" << cppString(model.processName)
+        << "\";\n";
+    out << "inline constexpr std::uint32_t kTargetPid = " << model.pid << "u;\n";
+    out << "inline constexpr char kRuntimeKind[] = \"" << cppString(model.runtimeKind)
+        << "\";\n";
+    out << "inline constexpr char kMetadataVersion[] = \"" << cppString(model.runtimeVersion)
+        << "\";\n";
+    out << "\n";
+
+    out << "namespace Modules {\n";
+    std::unordered_set<std::string> moduleNames;
+    for (const auto& module : model.modules) {
+        if (module.base == 0) {
+            continue;
+        }
+        const std::string lower = lowerAscii(module.name);
+        const bool keyNative = lower == "contracity.exe" || lower == "gameassembly.dll" ||
+                               lower == "unityplayer.dll" ||
+                               lower.find("mono") != std::string::npos;
+        if (module.kind == "native" && !keyNative) {
+            continue;
+        }
+        if (module.kind == "managed" && !module.selected) {
+            continue;
+        }
+        std::string stem = module.name;
+        const auto dot = stem.find_last_of('.');
+        if (dot != std::string::npos) {
+            stem = stem.substr(0, dot);
+        }
+        const std::string base = model::sanitizeIdentifier(stem, "Module");
+        const std::string name = uniqueMemberName(base, moduleNames);
+        out << "inline constexpr std::uintptr_t " << name << " = "
+            << toHex(static_cast<std::uint64_t>(module.base), 1) << "ull;  // "
+            << cleanComment(module.name);
+        if (!module.assemblyName.empty()) {
+            out << " (" << cleanComment(module.assemblyName) << ")";
+        }
+        out << "\n";
+    }
+    out << "}  // namespace Modules\n";
+    out << "\n";
+
+    out << "namespace Classes {\n";
+    std::unordered_set<std::string> structNames;
+    for (const auto* klass : classes) {
+        const std::string structName = classStructName(*klass, structNames);
+        out << "// " << cleanComment(klass->assembly) << "::" << cleanComment(klass->fullName);
+        if (!klass->baseType.empty()) {
+            out << " : " << cleanComment(klass->baseType);
+        }
+        out << "\n";
+        out << "struct " << structName << " {\n";
+        out << "    static constexpr std::uint32_t kToken = "
+            << toHex(klass->token, 8) << "u;\n";
+        out << "    static constexpr std::uint32_t kFlags = "
+            << toHex(klass->flags, 4) << "u;\n";
+        if (klass->instanceSize >= 0) {
+            out << "    static constexpr std::uint32_t kSize = "
+                << toHex(static_cast<std::uint64_t>(klass->instanceSize), 1) << "u;\n";
+        }
+        out << "    static constexpr std::uint32_t kValueSize = "
+            << toHex(static_cast<std::uint64_t>(klass->valueSize), 1) << "u;\n";
+        out << "\n";
+        writeFieldConstants(out, *klass);
+        if (!klass->fields.empty() && !klass->methods.empty()) {
+            out << "\n";
+        }
+        writeMethods(out, *klass);
+        out << "};\n";
+        out << "\n";
+    }
+    out << "}  // namespace Classes\n";
+    out << "\n";
+    out << "}  // namespace ContraCity::SDK\n";
+
+    out.flush();
+    if (!out) {
+        throw AppError("failed writing HPP output: " + path.string(), 5);
+    }
+}
+
+}  // namespace contra::emit
